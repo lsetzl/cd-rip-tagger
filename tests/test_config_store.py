@@ -38,3 +38,14 @@ def test_quality_presets_map_to_ffmpeg_args():
     assert config_store.ffmpeg_args("v0") == ["-q:a", "0"]
     assert config_store.ffmpeg_args("v2") == ["-q:a", "2"]
     assert config_store.ffmpeg_args("cbr320") == ["-b:a", "320k"]
+
+
+def test_drive_offset_defaults_to_zero(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert config_store.save(r"D:\Music", "v2")["drive_offset"] == 0
+
+
+def test_drive_offset_is_saved(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    config_store.save(r"D:\Music", "v2", 667)
+    assert config_store.load()["drive_offset"] == 667

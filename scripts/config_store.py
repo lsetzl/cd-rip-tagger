@@ -55,11 +55,16 @@ def load() -> dict[str, Any] | None:
     return data
 
 
-def save(library_root: str, quality: str) -> dict[str, Any]:
+def save(library_root: str, quality: str, drive_offset: int = 0) -> dict[str, Any]:
     if quality not in QUALITY_PRESETS:
         raise ValueError(f"未知の品質設定です: {quality}（選択肢: {', '.join(QUALITY_PRESETS)}）")
     root = Path(library_root).expanduser()
-    data = {"library_root": str(root), "quality": quality, "version": 1}
+    data = {
+        "library_root": str(root),
+        "quality": quality,
+        "drive_offset": int(drive_offset),
+        "version": 1,
+    }
     config_dir().mkdir(parents=True, exist_ok=True)
     config_path().write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

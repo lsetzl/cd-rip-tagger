@@ -37,18 +37,25 @@ def staged(tmp_path, monkeypatch):
     monkeypatch.setattr(
         deps, "require_tools", lambda *names: {"cyanrip": "cyanrip", "ffmpeg": FFMPEG}
     )
+    monkeypatch.setattr(
+        disc, "raw_access_context", lambda: {"elevated": True, "remote_session": False}
+    )
+    monkeypatch.setattr(
+        disc, "raw_read_available",
+        lambda drive: {"available": True, "win32_error": 0, "detail": None},
+    )
     monkeypatch.setattr(disc, "resolve_drive", lambda explicit: ("E:", []))
     monkeypatch.setattr(
         disc,
         "probe",
-        lambda cyanrip, drive: {"track_count": 3, "tracks": [], "parse_confident": True},
+        lambda drive, cyanrip=None: {"track_count": 3, "tracks": [], "parse_confident": True},
     )
 
-    def fake_rip(cyanrip, drive, workdir):
+    def fake_rip(cyanrip, drive, workdir, offset=0):
         workdir.mkdir(parents=True, exist_ok=True)
         return {number: make_wav(workdir / f"{number:02d}.wav") for number in (1, 2, 3)}
 
-    monkeypatch.setattr(disc, "rip_to_wav", fake_rip)
+    monkeypatch.setattr(disc, "rip_tracks", fake_rip)
     return {"input": input_path, "library": library}
 
 
@@ -81,13 +88,13 @@ def test_run_writes_tagged_files_to_library(staged, capsys):
 def test_run_maps_source_track(staged, monkeypatch):
     ripped = {}
 
-    def recording_rip(cyanrip, drive, workdir):
+    def recording_rip(cyanrip, drive, workdir, offset=0):
         workdir.mkdir(parents=True, exist_ok=True)
         for number in (1, 2, 3):
             ripped[number] = make_wav(workdir / f"{number:02d}.wav", seconds=0.1 * number)
         return dict(ripped)
 
-    monkeypatch.setattr(disc, "rip_to_wav", recording_rip)
+    monkeypatch.setattr(disc, "rip_tracks", recording_rip)
     assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 0
 
     out_dir = staged["library"] / "サークル名" / "Re：Collection"
@@ -109,11 +116,11 @@ def test_run_refuses_to_overwrite_without_flag(staged, capsys):
 
 
 def test_run_fails_when_source_track_missing(staged, monkeypatch, capsys):
-    def partial_rip(cyanrip, drive, workdir):
+    def partial_rip(cyanrip, drive, workdir, offset=0):
         workdir.mkdir(parents=True, exist_ok=True)
         return {1: make_wav(workdir / "01.wav")}
 
-    monkeypatch.setattr(disc, "rip_to_wav", partial_rip)
+    monkeypatch.setattr(disc, "rip_tracks", partial_rip)
     assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 1
     assert "CDトラック 3 のWAVが見つかりません" in json.loads(capsys.readouterr().out)["error"]
 
@@ -147,11 +154,111 @@ def test_run_dry_run_writes_nothing(staged, capsys):
 def test_run_cleans_up_work_dir(staged, monkeypatch):
     seen = {}
 
-    def recording_rip(cyanrip, drive, workdir):
+    def recording_rip(cyanrip, drive, workdir, offset=0):
         seen["workdir"] = Path(workdir)
         workdir.mkdir(parents=True, exist_ok=True)
         return {number: make_wav(workdir / f"{number:02d}.wav") for number in (1, 2, 3)}
 
-    monkeypatch.setattr(disc, "rip_to_wav", recording_rip)
+    monkeypatch.setattr(disc, "rip_tracks", recording_rip)
     assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 0
     assert not seen["workdir"].exists()
+
+
+def test_run_refuses_when_raw_access_denied(staged, monkeypatch, capsys):
+    monkeypatch.setattr(
+        disc, "raw_access_context", lambda: {"elevated": False, "remote_session": True}
+    )
+    monkeypatch.setattr(
+        disc, "raw_read_available",
+        lambda drive: {"available": False, "win32_error": 5, "detail": None},
+    )
+    assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 1
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert "生アクセスが拒否されました" in error
+    assert not staged["library"].exists()
+
+
+def test_dry_run_works_without_raw_access(staged, monkeypatch, capsys):
+    monkeypatch.setattr(
+        disc, "raw_read_available",
+        lambda drive: {"available": False, "win32_error": 5, "detail": None},
+    )
+    assert run(["run", "--input", str(staged["input"]), "--no-probe", "--dry-run"]) == 0
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+
+
+def test_library_root_override_redirects_output(staged, tmp_path, capsys):
+    other = tmp_path / "elsewhere"
+    assert run([
+        "run", "--input", str(staged["input"]), "--drive", "E:",
+        "--library-root", str(other), "--quality", "v0",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["output_dir"].startswith(str(other))
+    assert result["quality"] == "v0"
+    assert not staged["library"].exists()
+
+
+def test_library_root_override_works_without_saved_config(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "empty-appdata"))
+    input_path = tmp_path / "album.json"
+    input_path.write_text(json.dumps(ALBUM, ensure_ascii=False), encoding="utf-8")
+    assert run([
+        "plan", "--input", str(input_path), "--no-probe",
+        "--library-root", str(tmp_path / "lib"),
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["quality"] == "v2"
+
+
+def test_check_deps_reports_blocker_when_access_denied(monkeypatch, capsys):
+    monkeypatch.setattr(
+        disc, "raw_access_context", lambda: {"elevated": False, "remote_session": True}
+    )
+    monkeypatch.setattr(disc, "resolve_drive", lambda explicit: ("E:", []))
+    monkeypatch.setattr(
+        disc, "raw_read_available",
+        lambda drive: {"available": False, "win32_error": 5, "detail": None},
+    )
+    assert run(["check-deps", "--drive", "E:"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["can_rip"] is False
+    assert "本体のコンソールから実行してください" in result["blocker"]
+    assert result["raw_access"]["win32_error"] == 5
+
+
+def test_check_deps_reports_ok_when_access_available(monkeypatch, capsys):
+    monkeypatch.setattr(disc, "resolve_drive", lambda explicit: ("E:", []))
+    monkeypatch.setattr(
+        disc, "raw_read_available",
+        lambda drive: {"available": True, "win32_error": 0, "detail": None},
+    )
+    assert run(["check-deps", "--drive", "E:"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["can_rip"] is True
+    assert "blocker" not in result
+
+
+def test_check_deps_cannot_judge_without_a_single_drive(monkeypatch, capsys):
+    monkeypatch.setattr(
+        disc, "resolve_drive",
+        lambda explicit: (None, [{"drive": "E:", "caption": "a"}, {"drive": "F:", "caption": "b"}]),
+    )
+    assert run(["check-deps"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["can_rip"] is None
+    assert "E:, F:" in result["blocker"]
+
+
+def test_run_passes_configured_drive_offset(staged, monkeypatch):
+    seen = {}
+
+    def recording_rip(cyanrip, drive, workdir, offset=0):
+        seen["offset"] = offset
+        workdir.mkdir(parents=True, exist_ok=True)
+        return {number: make_wav(workdir / f"{number:02d}.wav") for number in (1, 2, 3)}
+
+    monkeypatch.setattr(disc, "rip_tracks", recording_rip)
+    config_store.save(str(staged["library"]), "v2", 667)
+    assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 0
+    assert seen["offset"] == 667

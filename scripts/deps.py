@@ -22,7 +22,7 @@ PLAN = {
         "what": "cyanrip（CDリッパー）の Windows 単一実行ファイル",
         "source": CYANRIP_URL,
         "dest": lambda: str(config_store.bin_dir() / "cyanrip.exe"),
-        "size_hint": "約20MB",
+        "size_hint": "約8MB",
     },
     "ffmpeg": {
         "what": "ffmpeg（MP3エンコード用、libmp3lame入りビルド）",

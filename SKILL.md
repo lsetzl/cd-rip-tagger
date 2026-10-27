@@ -13,13 +13,28 @@ CDをドライブに入れた状態で商品ページURLを渡されたら、こ
 実行は Windows ネイティブの PowerShell で行う。WSL2 からは光学ドライブが見えない。
 以下 `SKILL_DIR` はこのファイルがあるディレクトリ。
 
-## 1. 依存の確認
+**取り込みには、本体のコンソールセッションで実行されていることが必要。** 光学ドライブへの
+生アクセス（音声データの読み取り）はコンソールセッションに割り当てられるため、
+リモートデスクトップ接続からは拒否される。コンソールであれば管理者権限は不要。
+リモートのまま進めたい場合は、管理者として起動したセッションでなら通る。
+手順1で実際にアクセスできるかを確かめ、できなければそこで停止する。
+権限昇格を自分で試みてはならない（`Start-Process -Verb RunAs` 等）。
+
+## 1. 環境と依存の確認
 
 ```
-python <SKILL_DIR>/scripts/rip_and_tag.py check-deps
+python <SKILL_DIR>/scripts/rip_and_tag.py check-deps [--drive E:]
 ```
 
-`ok: true` なら次へ。`missing` があれば、`install_plan` の内容（何を・どこから・どこへ・サイズ）をユーザーに示して取得の承認を取り、承認されたものだけを渡す。
+`can_rip` は、ドライブを実際に開いて生アクセスできるかを試した結果。権限やセッション種別から
+推測しているのではないので、これが `true` なら取り込める。
+
+**`can_rip: false` なら、ここでユーザーに伝えて止まる。** `blocker` の内容をそのまま伝える。
+ページの抽出や確認画面まで進めてから落とすと、ユーザーの作業が無駄になる。
+ただしユーザーが「準備だけ進めたい」と言う場合は、手順2〜5（出力計画の確認まで）は実行できる。
+`can_rip: null` はドライブが特定できなかった場合で、`--drive` を指定して再実行する。
+
+`missing` があれば、`install_plan` の内容（何を・どこから・どこへ・サイズ）をユーザーに示して取得の承認を取り、承認されたものだけを渡す。
 
 ```
 python <SKILL_DIR>/scripts/rip_and_tag.py install-deps --accept cyanrip,ffmpeg,mutagen
@@ -101,6 +116,7 @@ python <SKILL_DIR>/scripts/rip_and_tag.py plan --input <album.json> [--drive E:]
 python <SKILL_DIR>/scripts/rip_and_tag.py run --input <album.json> [--drive E:] [--overwrite]
 ```
 
+手順1で `can_rip: true` を確認しているので、そのまま実行する。
 既存ファイルがある場合は、手順5で上書きの了解を得た上で `--overwrite` を付ける。
 取り込みには10分前後かかる。完了したら `output_dir` と書き出したファイル数をユーザーに報告する。
 
