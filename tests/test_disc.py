@@ -349,3 +349,7 @@ def test_build_rip_command_always_sets_offset(monkeypatch):
 def test_build_probe_command_omits_offset(monkeypatch):
     monkeypatch.setattr(disc, "supported_flags", lambda cyanrip: frozenset("dINAUGKoDFs"))
     assert "-s" not in disc.build_probe_command("cyanrip", "E:")
+
+
+def test_module_has_no_unused_access_denied_constant():
+    assert not hasattr(disc, "ERROR_ACCESS_DENIED")

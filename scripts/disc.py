@@ -1,4 +1,8 @@
-"""光学ドライブの検出と、cyanrip によるディスク情報取得・WAVリッピング。"""
+"""光学ドライブの検出と、ディスク情報の取得・cyanrip によるリッピング。
+
+トラック情報は `.cda` スタブから読む（生アクセス不要）。cyanrip はフォールバック。
+リッピングの中間ファイルは可逆圧縮形式で、実機では flac。
+"""
 from __future__ import annotations
 
 import ctypes
@@ -47,7 +51,6 @@ GENERIC_READ = 0x80000000
 FILE_SHARE_READ = 0x00000001
 FILE_SHARE_WRITE = 0x00000002
 OPEN_EXISTING = 3
-ERROR_ACCESS_DENIED = 5
 
 
 def raw_read_available(drive: str) -> dict[str, Any]:

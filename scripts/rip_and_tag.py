@@ -165,6 +165,40 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _discard_partial_output(
+    removable: list[Path], written: list[str], created_dirs: list[Path]
+) -> None:
+    """途中で失敗したとき、この実行で新しく作ったMP3を消す。
+
+    上書きしたファイルは元に戻せないため残し、何が残ったかを伝える。
+    """
+    removed = 0
+    for path in removable:
+        try:
+            if path.exists():
+                path.unlink()
+                removed += 1
+        except OSError as exc:
+            log(f"後片付けに失敗しました: {path}（{exc}）")
+    if removed:
+        log(f"途中までの出力を{removed}件削除しました。")
+
+    overwritten = [path for path in written if Path(path) not in set(removable)]
+    if overwritten:
+        log(
+            f"上書きした{len(overwritten)}件は元に戻せないため残しました: "
+            + ", ".join(overwritten)
+        )
+
+    # 自分で作ったディレクトリが空になったら消す（深い方から）
+    for path in sorted(created_dirs, key=lambda p: len(p.parts), reverse=True):
+        try:
+            path.rmdir()
+            log(f"空になったディレクトリを削除しました: {path}")
+        except OSError:
+            pass
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config = _config(args)
     album = album_mod.load(args.input)
@@ -200,7 +234,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     workdir = Path(args.work_dir) if args.work_dir else Path(tempfile.mkdtemp(prefix="cd-rip-tagger-"))
     keep_workdir = bool(args.work_dir) or args.keep_work_dir
     out_dir = Path(plan["output_dir"])
+    created_dirs = [path for path in (out_dir, out_dir.parent) if not path.exists()]
     written: list[str] = []
+    # 上書きしたファイルは消すと元のものまで失うので、今回新しく作る分だけ回収対象にする
+    removable: list[Path] = []
     try:
         log(f"作業ディレクトリ: {workdir}")
         ripped = disc.rip_tracks(
@@ -212,10 +249,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             source = ripped.get(file["source_track"])
             if source is None:
                 raise RuntimeError(
-                    f"CDトラック {file['source_track']} のWAVが見つかりません"
+                    f"CDトラック {file['source_track']} の取り込み結果が見つかりません"
                     f"（取り込めたトラック: {sorted(ripped)}）。"
                 )
             mp3_path = out_dir / file["filename"]
+            if not file["exists"]:
+                removable.append(mp3_path)
             log(f"[{file['number']}/{total}] エンコード: {file['filename']}")
             encode.encode(tools["ffmpeg"], source, mp3_path, config["quality"])
             tagging.write_tags(
@@ -230,6 +269,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 cover=cover,
             )
             written.append(str(mp3_path))
+    except BaseException:
+        _discard_partial_output(removable, written, created_dirs)
+        raise
     finally:
         if keep_workdir:
             log(f"作業ディレクトリを残しました: {workdir}")

@@ -122,7 +122,7 @@ def test_run_fails_when_source_track_missing(staged, monkeypatch, capsys):
 
     monkeypatch.setattr(disc, "rip_tracks", partial_rip)
     assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 1
-    assert "CDトラック 3 のWAVが見つかりません" in json.loads(capsys.readouterr().out)["error"]
+    assert "CDトラック 3 の取り込み結果が見つかりません" in json.loads(capsys.readouterr().out)["error"]
 
 
 def test_run_embeds_cover(staged, monkeypatch, capsys):
@@ -262,3 +262,55 @@ def test_run_passes_configured_drive_offset(staged, monkeypatch):
     config_store.save(str(staged["library"]), "v2", 667)
     assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 0
     assert seen["offset"] == 667
+
+
+def _fail_on_second_track(monkeypatch):
+    calls = {"n": 0}
+    real = rip_and_tag.encode.encode
+
+    def flaky(ffmpeg, source, mp3, quality):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("意図的な失敗")
+        return real(ffmpeg, source, mp3, quality)
+
+    monkeypatch.setattr(rip_and_tag.encode, "encode", flaky)
+    return calls
+
+
+def test_failure_removes_newly_written_files(staged, monkeypatch, capsys):
+    _fail_on_second_track(monkeypatch)
+    assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 1
+    assert "意図的な失敗" in json.loads(capsys.readouterr().out)["error"]
+    # 1曲目は書けていたが、この実行で作ったものなので消える
+    assert not (staged["library"] / "サークル名" / "Re：Collection").exists()
+    # 自分で作ったディレクトリも残さない
+    assert not (staged["library"] / "サークル名").exists()
+
+
+def test_failure_keeps_overwritten_files(staged, monkeypatch, capsys):
+    out_dir = staged["library"] / "サークル名" / "Re：Collection"
+    out_dir.mkdir(parents=True)
+    first = out_dir / "01 一曲目 ／ 序.mp3"
+    first.write_bytes(b"old")
+
+    _fail_on_second_track(monkeypatch)
+    assert run([
+        "run", "--input", str(staged["input"]), "--drive", "E:", "--overwrite",
+    ]) == 1
+    # 上書きしたファイルは元に戻せないので残す（消すと元のものまで失う）
+    assert first.exists()
+    assert first.read_bytes() != b"old"
+    assert not (out_dir / "02 二曲目.mp3").exists()
+    assert "残しました" in capsys.readouterr().err
+
+
+def test_failure_keeps_preexisting_directory(staged, monkeypatch):
+    out_dir = staged["library"] / "サークル名" / "Re：Collection"
+    out_dir.mkdir(parents=True)
+    (out_dir / "memo.txt").write_bytes(b"x")
+
+    _fail_on_second_track(monkeypatch)
+    assert run(["run", "--input", str(staged["input"]), "--drive", "E:"]) == 1
+    assert out_dir.exists()
+    assert (out_dir / "memo.txt").exists()
