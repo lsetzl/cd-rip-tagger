@@ -1,0 +1,112 @@
+---
+name: cd-rip-tagger
+description: ドライブに入れたCDと商品ページURL（BOOTH等）から、リッピング・MP3エンコード・タグ付け・ライブラリへの配置までを一括で行う。gnudb/MusicBrainz/CTDBに未登録の同人CDが対象。「このCDを取り込んで」「CDをリッピングしてタグを付けて」と言われたとき、またはCDのURLを渡されたときに使う。
+---
+
+# cd-rip-tagger
+
+CDをドライブに入れた状態で商品ページURLを渡されたら、この手順で取り込む。
+曲目の抽出はあなた（Claude）がページを読んで行い、取り込み・エンコード・タグ付け・配置はスクリプトが行う。
+
+**ユーザーへの確認は手順5の1回だけにまとめる。** それ以前の手順で立ち止まらない（ドライブが複数ある場合と、依存の取得承認だけは例外）。
+
+実行は Windows ネイティブの PowerShell で行う。WSL2 からは光学ドライブが見えない。
+以下 `SKILL_DIR` はこのファイルがあるディレクトリ。
+
+## 1. 依存の確認
+
+```
+python <SKILL_DIR>/scripts/rip_and_tag.py check-deps
+```
+
+`ok: true` なら次へ。`missing` があれば、`install_plan` の内容（何を・どこから・どこへ・サイズ）をユーザーに示して取得の承認を取り、承認されたものだけを渡す。
+
+```
+python <SKILL_DIR>/scripts/rip_and_tag.py install-deps --accept cyanrip,ffmpeg,mutagen
+```
+
+承認されなければ、ユーザー自身で用意してもらう旨を伝えて中断する。
+
+## 2. 設定（初回のみ）
+
+```
+python <SKILL_DIR>/scripts/rip_and_tag.py setup
+```
+
+`configured: false` なら、ライブラリルートとエンコード品質を聞いて保存する。品質の選択肢は出力の `quality_presets` にある（`v2` が推奨の初期値）。
+
+```
+python <SKILL_DIR>/scripts/rip_and_tag.py setup --library-root "D:\Music" --quality v2
+```
+
+`configured: true` なら何も聞かない。後から変えたいと言われたら同じ `setup` に値を渡す。
+
+## 3. ディスクの確認
+
+```
+python <SKILL_DIR>/scripts/rip_and_tag.py probe
+```
+
+光学ドライブが複数あるとエラーに候補が出る。その場合だけユーザーに選んでもらい、以降のコマンドに `--drive E:` を付ける。
+出力の `track_count` がCDのトラック数。`parse_confident: false` のときは `raw`（cyanrip の生出力）を自分で読んでトラック数を判断する。
+
+## 4. 商品ページから曲目を抽出
+
+WebFetch で商品ページを読み、次の形のJSONを作って一時ファイルに書く（UTF-8）。
+
+```json
+{
+  "album": "アルバム名",
+  "album_artist": "サークル名",
+  "year": "2025",
+  "cover_url": "https://booth.pximg.net/.../xxx.jpg",
+  "source_url": "https://xxx.booth.pm/items/0000000",
+  "tracks": [
+    {"number": 1, "title": "曲名", "artist": "歌い手名"},
+    {"number": 2, "title": "曲名2"}
+  ]
+}
+```
+
+- `album` と `album_artist`、各トラックの `number` と `title` は必須。他は省略可。
+- `album_artist` はサークル名。出力フォルダ名にもこれを使う。
+- `artist` は曲ごとのボーカル・アーティスト。ページに書かれていなければ省く（`album_artist` で埋められる）。
+- `year` は頒布日・発売日の**年のみ**。ページに無ければ省く。
+- `cover_url` は商品ページのメイン画像の直リンク。BOOTH なら `booth.pximg.net` のURL。
+- トラックリストの書式はページごとにばらばら（`01. 曲名 / 歌手`、`1 曲名（vocal: X）`、表形式など）。決め打ちせず読んで判断する。
+- 曲名に `:` や `/` が含まれていても、そのまま書く。ファイル名用の置換はスクリプト側で行う。
+- CDのトラック数とページの曲数が違う場合は、各トラックに `source_track`（CD上のトラック番号）を付けて対応付けできる。既定は `number` と同じ。
+
+BOOTH を主対象とするが、他のサイトでも同じようにページを読んでベストエフォートで抽出する。
+
+## 5. 確認（ここが唯一のユーザー確認）
+
+```
+python <SKILL_DIR>/scripts/rip_and_tag.py plan --input <album.json> [--drive E:]
+```
+
+出力を元に、次を**まとめて1回**提示する。
+
+- 全トラックの表：トラック番号／曲名／アーティスト／実際のファイル名
+- アルバム名・アルバムアーティスト・年・ジャケット画像の有無
+- 出力先 `output_dir` とエンコード品質
+- `warnings` の全項目（トラック数の不一致、年やジャケットの欠落、既存ファイルの上書き、トラック番号の飛び、パス長超過など）
+
+そしてユーザーに「このまま取り込むか、修正があるか」を聞く。修正を指示されたらJSONを直して `plan` をやり直し、再提示する。
+**承認を得るまで `run` を実行しない。**
+
+## 6. 実行
+
+```
+python <SKILL_DIR>/scripts/rip_and_tag.py run --input <album.json> [--drive E:] [--overwrite]
+```
+
+既存ファイルがある場合は、手順5で上書きの了解を得た上で `--overwrite` を付ける。
+取り込みには10分前後かかる。完了したら `output_dir` と書き出したファイル数をユーザーに報告する。
+
+## 制約
+
+- 出力は MP3 のみ。タグは ID3v2.3 + UTF-16 で書き、ID3v1 は書かない。
+- 複数枚組は対象外。1枚ずつ、ディスクを入れ替えて実行する。
+- gnudb / MusicBrainz / CTDB への問い合わせは行わない（未登録のCDが対象のため）。
+- MusicBrainz への登録は行わない。
