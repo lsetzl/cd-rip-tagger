@@ -39,9 +39,23 @@ python scripts/rip_and_tag.py install-deps --accept cyanrip,mutagen   # 承認�
 
 ## 導入
 
+`~/.claude/skills/` に置くとすべてのプロジェクトで使える。プロジェクト限定にするなら、そのプロジェクトの `.claude/skills/` に置く。
+
 ```
-npx skills add https://github.com/lsetzl/cd-rip-tagger
+git clone https://github.com/lsetzl/cd-rip-tagger.git "$env:USERPROFILE\.claude\skills\cd-rip-tagger"
 ```
+
+更新は `git pull`。
+
+[vercel-labs/skills](https://github.com/vercel-labs/skills) を使う方法もある。
+
+```
+npx skills add lsetzl/cd-rip-tagger -a claude-code -g
+```
+
+`-g` でグローバル（省略するとプロジェクト側）。ただしこのスキルは `SKILL.md` だけでは動かず `scripts/` が必要で、付随ファイルが一緒に入るかは未確認。入れた後に `scripts/rip_and_tag.py` があるか確かめること。
+
+設定は `%APPDATA%\cd-rip-tagger\`、自動取得した依存ツールは `%LOCALAPPDATA%\cd-rip-tagger\bin\` に入るので、スキル本体を置き直しても消えない。
 
 ## 設定
 
