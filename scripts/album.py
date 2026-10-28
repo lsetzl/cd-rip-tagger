@@ -49,6 +49,10 @@ def validate(data: Any) -> dict[str, Any]:
             raise RuntimeError(
                 f"tracks[{index - 1}] の source_track が整数ではありません: {source_track!r}"
             ) from exc
+        if source_track < 1:
+            raise RuntimeError(
+                f"tracks[{index - 1}]（number={number}）の source_track が1未満です: {source_track}"
+            )
         tracks.append(
             {
                 "number": number,
@@ -92,6 +96,17 @@ def build_plan(
                 "exists": (out_dir / filename).exists(),
             }
         )
+
+    # CDに無いトラックを指していたら、リッピングで必ず失敗する。確認画面に進む前に止める
+    if disc_track_count is not None:
+        out_of_range = sorted(
+            {file["source_track"] for file in files if file["source_track"] > disc_track_count}
+        )
+        if out_of_range:
+            raise RuntimeError(
+                f"source_track がCDのトラック数（{disc_track_count}）を超えています: "
+                f"{out_of_range}。取り込めないので、対応付けを直してください。"
+            )
 
     warnings: list[str] = []
     numbers = [track["number"] for track in album["tracks"]]

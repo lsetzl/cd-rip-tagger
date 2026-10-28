@@ -110,8 +110,13 @@ def _install_ffmpeg() -> str:
         print(f"ffmpeg を取得中: {FFMPEG_URL}", file=sys.stderr)
         _download(FFMPEG_URL, archive)
         extract_dir = Path(tmpdir) / "extract"
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(extract_dir)
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                zf.extractall(extract_dir)
+        except zipfile.BadZipFile as exc:
+            raise RuntimeError(
+                f"ダウンロードした ffmpeg のzipが壊れています（{exc}）。やり直してください。"
+            ) from exc
         exes = list(extract_dir.rglob("ffmpeg.exe"))
         if not exes:
             raise RuntimeError("ダウンロードしたzipに ffmpeg.exe が見つかりませんでした。")
@@ -127,10 +132,18 @@ def _install_ffmpeg() -> str:
 
 def _install_mutagen() -> str:
     print("mutagen を pip で導入中", file=sys.stderr)
-    subprocess.run(
+    completed = subprocess.run(
         [sys.executable, "-m", "pip", "install", "--upgrade", "mutagen"],
-        check=True,
+        capture_output=True,
+        text=True,
+        errors="replace",
     )
+    if completed.returncode != 0:
+        tail = (completed.stderr or completed.stdout or "").strip().splitlines()[-10:]
+        raise RuntimeError(
+            f"pip install mutagen が失敗しました（終了コード {completed.returncode}）。\n"
+            + "\n".join(tail)
+        )
     return sys.executable
 
 

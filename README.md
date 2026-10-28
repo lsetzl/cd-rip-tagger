@@ -6,10 +6,10 @@ gnudb / MusicBrainz / CTDB に未登録の同人CDが対象。曲目は外部DB�
 
 ## 何をするか
 
-1. 光学ドライブを検出し、`cyanrip -I` でトラック数を取得する
+1. 光学ドライブを検出し、`.cda` スタブからトラック数と各トラックの長さを取得する（生アクセス不要。`cyanrip -I` はフォールバック）
 2. Claude が商品ページを読んで、アルバム名・曲名・アーティスト・年・ジャケット画像URLを抽出する
 3. 抽出したタグ一覧と出力先を**1回だけ**ユーザーに確認する
-4. cyanrip でWAVに取り込み、ffmpeg でMP3にエンコードし、mutagen でタグを書いて配置する
+4. cyanrip で可逆圧縮（flac）に取り込み、ffmpeg でMP3にエンコードし、mutagen でタグを書いて配置する
 
 出力先は `<ライブラリルート>/<アルバムアーティスト>/<アルバム名>/NN 曲名.mp3`。
 
@@ -29,16 +29,18 @@ gnudb / MusicBrainz / CTDB に未登録の同人CDが対象。曲目は外部DB�
 cyanrip・ffmpeg・mutagen は、承認を取った上でスキルが自動取得できる。`%LOCALAPPDATA%\cd-rip-tagger\bin` に置かれ、PATH は汚さない。
 
 ```
-python scripts/rip_and_tag.py check-deps                      # 不足と導入計画を確認
-python scripts/rip_and_tag.py install-deps --accept cyanrip   # 承認したものだけ取得
+python scripts/rip_and_tag.py check-deps --drive E:                   # 不足・導入計画・取り込めるかを確認
+python scripts/rip_and_tag.py install-deps --accept cyanrip,mutagen   # 承認したものだけ取得
 ```
+
+`check-deps` の `can_rip` は、ドライブを実際に開いて生アクセスできるかを試した結果。`false` なら `blocker` に理由が入る。光学ドライブが複数あって特定できない場合は `null` になるので、`--drive` を付けて実行する。
 
 自分で用意する場合は、`cyanrip.exe` と `ffmpeg.exe` を PATH に置き、`pip install mutagen` する。
 
 ## 導入
 
 ```
-npx skills add https://github.com/<user>/cd-rip-tagger
+npx skills add https://github.com/lsetzl/cd-rip-tagger
 ```
 
 ## 設定
@@ -48,6 +50,7 @@ npx skills add https://github.com/<user>/cd-rip-tagger
 ```
 python scripts/rip_and_tag.py setup                                        # 現在の設定と選択肢を表示
 python scripts/rip_and_tag.py setup --library-root "D:\Music" --quality v2 # 保存・変更
+python scripts/rip_and_tag.py setup --drive-offset 667                     # ドライブオフセット
 ```
 
 | 品質 | 内容 |
@@ -55,6 +58,8 @@ python scripts/rip_and_tag.py setup --library-root "D:\Music" --quality v2 # 保
 | `v0` | VBR V0（最高品質・約245kbps） |
 | `v2` | VBR V2（推奨・約190kbps） |
 | `cbr320` | CBR 320kbps（固定ビットレート） |
+
+`drive_offset` はドライブの読み取りオフセット（サンプル数、既定0）。cyanrip は実リップ時にこの値の明示を要求する。同人CDのタグ付けが目的なら0で足りるが、AccurateRip 水準の正確さが必要なら自分のドライブの値を入れる。
 
 ## 手動で実行する
 
@@ -68,7 +73,15 @@ python scripts/rip_and_tag.py run  --input album.json --dry-run    # 取り込�
 python scripts/rip_and_tag.py run  --input album.json --overwrite  # 実行
 ```
 
-`album.json` の形式は [SKILL.md](SKILL.md) の手順4を参照。出力はすべて UTF-8 のJSON（進捗ログは標準エラー出力）。
+`plan` と `run` は、保存した設定を一時的に上書きできる。本番のライブラリを汚さずに試すときに使う。
+
+```
+python scripts/rip_and_tag.py run --input album.json --library-root D:\tmp --quality v0
+```
+
+他に `--disc-track-count N`（ディスク情報の取得を省いてトラック数を手で渡す）、`--no-probe`、`run` の `--work-dir` / `--keep-work-dir`（中間ファイルを残して調べる）がある。
+
+`album.json` の形式は [SKILL.md](SKILL.md) の手順4を参照。出力はすべて UTF-8 のJSON（進捗ログは標準エラー出力）。エラーは `{"error": "..."}` を返して終了コード1。
 
 ## 仕様
 
@@ -76,7 +89,9 @@ python scripts/rip_and_tag.py run  --input album.json --overwrite  # 実行
 
 書き込むタグ：アルバム名（TALB）、アルバムアーティスト（TPE2）、曲名（TIT2）、トラック番号（TRCK、`N/総数`）、アーティスト（TPE1、無ければアルバムアーティストで埋める）、年（TYER）、ジャケット画像（APIC、フロントカバー）。`folder.jpg` は置かない。
 
-フォルダ名・ファイル名に使えない文字 `\ / : * ? " < > |` は全角の同等文字に置き換え、末尾のドットと空白を除去する。Windows の予約名（CON, NUL など）は先頭に `_` を付ける。
+フォルダ名・ファイル名に使えない文字 `\ / : * ? " < > |` は全角の同等文字に置き換え、末尾のドットと空白を除去する。Windows の予約名（CON, NUL など）は先頭に `_` を付ける。置換はファイル名側だけで、タグの中身は原文のまま。
+
+取り込みが途中で失敗した場合、この実行で新しく作ったMP3は削除する。`--overwrite` で上書きしたファイルは元に戻せないため残し、何が残ったかを標準エラー出力に出す。
 
 ## 対象外
 

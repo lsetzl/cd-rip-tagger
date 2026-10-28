@@ -97,3 +97,36 @@ def test_build_plan_detects_existing_files(tmp_path):
     plan = album.build_plan(album.validate(sample()), config)
     assert plan["existing_files"] == [str(out / "01 One.mp3")]
     assert any("上書き" in warning for warning in plan["warnings"])
+
+
+def test_validate_rejects_source_track_below_one():
+    raw = sample()
+    raw["tracks"] = [{"number": 1, "title": "T", "source_track": 0}]
+    with pytest.raises(RuntimeError, match="source_track が1未満"):
+        album.validate(raw)
+
+
+def test_build_plan_rejects_source_track_beyond_disc(tmp_path):
+    config = {"library_root": str(tmp_path), "quality": "v2"}
+    raw = sample()
+    raw["tracks"] = [{"number": 1, "title": "T", "source_track": 9}]
+    data = album.validate(raw)
+    # リッピングで必ず失敗するので、確認画面に進む前に止める
+    with pytest.raises(RuntimeError, match="source_track がCDのトラック数"):
+        album.build_plan(data, config, disc_track_count=4)
+
+
+def test_build_plan_allows_source_track_equal_to_disc_count(tmp_path):
+    config = {"library_root": str(tmp_path), "quality": "v2"}
+    raw = sample()
+    raw["tracks"] = [{"number": 1, "title": "T", "source_track": 4}]
+    plan = album.build_plan(album.validate(raw), config, disc_track_count=4)
+    assert plan["files"][0]["source_track"] == 4
+
+
+def test_build_plan_skips_range_check_without_disc_count(tmp_path):
+    config = {"library_root": str(tmp_path), "quality": "v2"}
+    raw = sample()
+    raw["tracks"] = [{"number": 1, "title": "T", "source_track": 99}]
+    plan = album.build_plan(album.validate(raw), config)
+    assert plan["files"][0]["source_track"] == 99
